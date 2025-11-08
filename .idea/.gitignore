@@ -1,8 +1,23 @@
-# 默认忽略的文件
-/shelf/
-/workspace.xml
-# 基于编辑器的 HTTP 客户端请求
-/httpRequests/
-# Datasource local storage ignored files
-/dataSources/
-/dataSources.local.xml
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.idea/
+*.iml
+data/cache/
+runs/
+logs/
+out/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+report/*.aux
+report/*.log
+report/*.toc
+report/*.out
+report/*.lof
+report/*.lot
+report/*.synctex.gz
