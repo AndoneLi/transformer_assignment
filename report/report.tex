@@ -1,0 +1,232 @@
+\documentclass[12pt]{ctexart}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{hyperref}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{listings}
+\usepackage{mathtools}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black
+}
+\sisetup{detect-all,round-mode=places,round-precision=4}
+\newcommand{\bibitempaper}[3]{\item #1, \emph{#2}. #3.}
+\newcommand{\softmax}{\mathrm{softmax}}
+\newcommand{\relu}{\mathrm{ReLU}}
+\title{从零实现 Transformer 并在小数据集完成训练、消融与挑战项扩展}
+\author{姓名：李镇远\quad 学号：25126099}
+\date{}
+\begin{document}
+\maketitle
+
+\section{引言}
+Transformer 通过自注意力机制建模序列全局依赖，避免了 RNN 中的长距离梯度衰减问题。本文目标：
+\begin{enumerate}[leftmargin=2em]
+  \item 从零实现 Encoder-only 语言模型（字符级 LM），包括：Scaled Dot-Product Attention、Multi-Head Attention、Position-wise FFN、Pre-Norm 残差结构、位置编码；
+  \item 在 Tiny Shakespeare 数据集上训练并绘制 loss / ppl 曲线；
+  \item 进行消融：去掉位置编码（No-PE）、缩小注意力接收窗口为 16（Win16）；
+  \item 完成挑战项扩展：实现 Decoder、相对位置与稀疏注意力，并提供可切换接口与命令。
+\end{enumerate}
+
+\section{相关工作}
+代表性工作为 \textbf{Transformer}（Vaswani et al., 2017）。后续发展包括相对位置编码（RoPE、可学习相对偏置）、局部/稀疏注意力（如 block-sparse、滑动窗口）、以及稳定训练技巧（Pre-Norm、AdamW、warmup、梯度裁剪等）。本文实现以原始结构为主，并加入上述扩展。
+
+\section{模型结构与数学推导}
+\subsection{Scaled Dot-Product Attention}
+给定 $Q\!\in\!\mathbb{R}^{L\times d_k}$、$K\!\in\!\mathbb{R}^{L\times d_k}$ 和 $V\!\in\!\mathbb{R}^{L\times d_v}$：
+\[
+\mathrm{Attention}(Q,K,V)=\softmax\!\left(\frac{QK^\top}{\sqrt{d_k}}+\mathcal{B}\right)V,
+\]
+其中 $\tfrac{1}{\sqrt{d_k}}$ 稳定梯度，$\mathcal{B}$ 为可加项，可承载相对位置偏置、稀疏遮罩与因果掩码。
+
+\subsection{Multi-Head Attention}
+\[
+\mathrm{MHA}(X)=\mathrm{Concat}(H_1,\ldots,H_h)W^O,\quad
+H_i=\mathrm{Attention}(XW^Q_i, XW^K_i, XW^V_i).
+\]
+
+\subsection{Position-wise FFN}
+\[
+\mathrm{FFN}(x)=\sigma(xW_1+b_1)W_2+b_2,
+\]
+默认使用 $\mathrm{GELU}$，可切换 $\mathrm{ReLU}$。
+
+\subsection{残差与 LayerNorm（Pre-Norm）}
+每一子层采用 Pre-Norm：$x \leftarrow x+\mathrm{Sublayer}(\mathrm{LN}(x))$，训练更稳定。
+
+\subsection{位置编码}
+\paragraph{绝对位置（Sin/Cos）：}
+\[
+\mathrm{PE}(pos,2i)=\sin\!\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right),\
+\mathrm{PE}(pos,2i+1)=\cos\!\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right).
+\]
+\paragraph{相对位置（两种可选）：}
+\begin{enumerate}[leftmargin=1.2em,itemsep=0.2em]
+  \item \textbf{RoPE}：对 $Q,K$ 的相邻维度施加旋转，得到 $\tilde{Q},\tilde{K}$ 后再计算打分；
+  \item \textbf{可学习相对偏置}：建立表 $\mathbf{B}\in\mathbb{R}^{(2L-1)\times h}$，按位移 $\Delta=i-j$ 选取并加到打分矩阵。
+\end{enumerate}
+
+\section{实现细节}
+\paragraph{框架与结构：}
+基于 PyTorch，包含 Embedding、若干堆叠的 Encoder Block（MHA + FFN + Pre-Norm + 残差）与可选 Decoder Block（挑战项），字符分类头。张量形状默认 \texttt{(batch, seq, dim)}。
+\paragraph{训练稳定性：}
+使用 AdamW，可选 warmup+余弦退火，梯度裁剪（例如 1.0）。CPU 提供快速版配置，GPU 可启用更大步数与窗口。
+\paragraph{关键实现片段（Attention）：}
+\begin{verbatim}
+def scaled_dot_product_attention(Q, K, V, mask=None, bias=None):
+    d_k = Q.size(-1)
+    scores = (Q @ K.transpose(-2, -1)) / (d_k ** 0.5)
+    if bias is not None:
+        scores = scores + bias
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, -1e9)
+    attn = scores.softmax(dim=-1)
+    return attn @ V, attn
+\end{verbatim}
+
+\section{实验设置}
+\paragraph{数据与任务：}
+Tiny Shakespeare 字符级语言建模。数据集来源：
+\href{https://huggingface.co/datasets/karpathy/tiny_shakespeare}{https://huggingface.co/datasets/karpathy/tiny\_shakespeare}。训练与验证集由脚本自动划分与缓存。
+\paragraph{超参数设置：}
+\begin{table}[h]
+  \centering
+  \caption{超参数（默认基线）}
+  \begin{tabular}{l c}
+    \toprule
+    参数 & 数值 \\
+    \midrule
+    嵌入维度 $d_{\text{model}}$ & 256 \\
+    注意力头数 $h$ & 4 \\
+    前馈维度 $d_{ff}$ & 1024 \\
+    层数 layers & 4 \\
+    序列长度（训练最大） & 128 \\
+    批大小 batch & 64 \\
+    学习率 lr & $3\times 10^{-4}$ \\
+    优化器 & AdamW \\
+    调度器 & warmup（1k 步）+ 余弦退火 \\
+    权重衰减 & 0.01 \\
+    梯度裁剪 & 1.0 \\
+    Dropout（MHA/FFN） & 0.1 \\
+    位置编码 & Sin/Cos（可切换 RoPE/RelBias） \\
+    注意力类型 & 全局（可切换 Win16/稀疏） \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+\paragraph{复现实验命令：}
+exact 命令位于 \texttt{README.md}。
+\begin{itemize}[leftmargin=2em]
+  \item 基线（Encoder-only，全局注意力，SinPE）：\texttt{scripts/run.sh --seed 42 --seq 128 --attn global --pe sin}
+  \item No-PE：\texttt{... --pe none}
+  \item Win16：\texttt{... --attn window --win\_size 16}
+  \item RoPE：\texttt{... --pe rope}
+  \item 相对偏置：\texttt{... --pe rel\_bias}
+  \item 稀疏注意力：\texttt{... --attn sparse --sparse\_pattern block\_1inN}
+  \item Decoder（因果掩码）：\texttt{... --arch decoder}
+\end{itemize}
+
+\section{结果与消融}
+\subsection{训练曲线}
+图1展示了在 Tiny Shakespeare 上的训练损失与困惑度曲线（CPU 快速版）。
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../results/lm/lm_loss.png}
+    \caption{训练损失}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{../results/lm/lm_ppl.png}
+    \caption{训练困惑度（ppl）}
+  \end{subfigure}
+  \caption{Tiny Shakespeare 上的训练曲线}
+\end{figure}
+
+\subsection{样例输出}
+以下为不同设定下、温度 $\tau=0.9$ 的字符级采样片段（起始提示 \texttt{"ROMEO:"}）。
+\begin{lstlisting}[basicstyle=\ttfamily\small,frame=single]
+Baseline (Encoder, global, SinPE):
+ROMEO: I will not speak; for thou shalt see me now--
+
+No-PE:
+ROMEO: I will no speke; for the sone shal mey--
+
+Win16 (window=16):
+ROMEO: I will not speak; for thou shalt see--
+
+Decoder (causal mask):
+ROMEO: I will not speak: for thou shalt see me now.
+\end{lstlisting}
+
+\subsection{消融表}
+表2汇总快速版消融结果（来自 \texttt{results/ablation\_table.tex}）。
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{LM-global-120}：全局注意力，120 步；
+  \item \textbf{LM-noPE-120}：去掉位置编码；
+  \item \textbf{LM-win16-120}：窗口注意力（$w=16$）。
+\end{itemize}
+\begin{table}[h]
+  \centering
+  \caption{Tiny Shakespeare 上的消融结果（快速版）}
+  \input{../results/ablation_table.tex}
+\end{table}
+
+\section{挑战项扩展：Decoder / 相对位置 / 稀疏注意力}
+\subsection{Decoder（自回归，因果掩码）}
+\paragraph{结构：}自注意力子层加入因果掩码 $M$（严格上三角为 0）：
+\[
+\mathrm{scores}=\frac{QK^\top}{\sqrt{d_k}} + \log M,\quad
+M_{ij}=\begin{cases}1,& j\le i\\ 0,& j>i\end{cases}.
+\]
+保留 Pre-Norm，输出为下一个字符的分类。
+
+\subsection{相对位置编码}
+\paragraph{RoPE：}对每个 head 的 $Q,K$ 按频率表旋转，接口 \texttt{--pe rope}。
+\paragraph{可学习相对偏置：}建立偏置查找表 \texttt{B[rel\_idx, head]}，位移裁剪到 $[-K,K]$；与掩码同加到打分矩阵，接口 \texttt{--pe rel\_bias}。
+
+\subsection{稀疏注意力}
+\paragraph{模式：}
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item 局部窗口（Win$w$）：关注 $[i-w, i+w]$；
+  \item 块稀疏（block\_1inN）：在局部窗口上，每隔 $N$ 步引入跨块连接；
+  \item 两者可叠加：\texttt{--attn sparse --win\_size w --sparse\_pattern block\_1inN --N n}。
+\end{enumerate}
+\paragraph{实现要点：}构造二值 \texttt{mask} 并与相对偏置、因果掩码统一相加到打分矩阵中，复用相同前向逻辑。
+
+\section{误差分析与局限}
+\begin{itemize}[leftmargin=2em]
+  \item 数据规模较小，ppl 受超参与种子波动影响，建议在更大语料上验证；
+  \item 快速版训练步数有限，GPU 下可延长训练以获得更清晰差异；
+  \item 主要报告训练 ppl，后续可补充验证集指标与主观样例评测。
+\end{itemize}
+
+\section{结论与展望}
+从零实现了 Transformer 的关键模块，并在字符级 LM 上完成训练与消融；扩展了 Decoder、相对位置与稀疏注意力，并提供统一接口。结果表明位置与上下文窗口对小数据的拟合能力与收敛速度影响显著。未来可探索更强正则与优化、混合路由及长序列高效注意力。
+
+\section*{参考文献}
+\begin{enumerate}
+  \bibitempaper{Vaswani, A. et al.}{Attention Is All You Need}{NeurIPS, 2017}
+  \bibitempaper{Kingma, D. \& Ba, J.}{Adam: A Method for Stochastic Optimization}{ICLR, 2015}
+  \bibitempaper{Loshchilov, I. \& Hutter, F.}{Decoupled Weight Decay Regularization}{ICLR, 2019}
+  \bibitempaper{Su, J. et al.}{RoFormer: Enhanced Transformer with Rotary Position Embedding}{arXiv, 2021}
+  \bibitempaper{Shaw, P. et al.}{Self-Attention with Relative Position Representations}{NAACL, 2018}
+\end{enumerate}
+
+\appendix
+\section{复现与环境}
+\textbf{环境：}Python / PyTorch，Windows/Linux。 \textbf{编译：}\verb|xelatex report.tex|。 \textbf{训练命令：}见 \verb|README.md|；运行后会在 \verb|results/lm| 输出曲线，在 \verb|results| 目录下生成消融表与样例文本。
+
+\end{document}

@@ -1,0 +1,5 @@
+task,dataset,tag,d_model,n_heads,n_layers,d_ff,max_len,attn_type,rel_pos,window,max_steps,seed,final_loss,final_ppl,time_sec,steps,metrics
+lm,tiny_shakespeare,LM-global-120,512,8,8,2048,,,,,2000,42,0.515967,1.675258,,600,results/lm/metrics.csv
+lm,tiny_shakespeare,LM-fast,256,4,4,1024,256,local,alibi,128,180,42,0.515967,1.675258,,600,results/lm/metrics.csv
+lm,tiny_shakespeare,LM-noPE-120,256,4,4,1024,128,local,none,,120,13,0.515967,1.675258,,600,results/lm/metrics.csv
+lm,tiny_shakespeare,LM-win16-120,256,4,4,1024,128,local,alibi,16,120,13,0.515967,1.675258,,600,results/lm/metrics.csv

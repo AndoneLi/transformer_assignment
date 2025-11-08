@@ -1,0 +1,45 @@
+# configs/base_lm.yaml  —— 修正版（数值均为数字类型，非字符串）
+# 默认：ALiBi 相对位置 + 局部注意力；tiny_shakespeare 语言建模
+
+train:
+  # 运行与训练超参
+  seed: 42
+  batch_size: 64
+  seq_len: 256
+  max_steps: 2000
+
+  # 优化器与调度（确保都是数字，不加引号）
+  lr: 0.0003            # learning rate（不要写成 "3e-4"）
+  betas: [0.9, 0.95]    # AdamW 的 betas（不要写成 ["0.9","0.95"]）
+  weight_decay: 0.01
+  warmup_steps: 100
+  grad_clip: 1.0
+
+  # 正则化/精度
+  dropout: 0.10
+  precision: amp        # 可选：amp / fp32
+
+  # 注意力/相对位置与窗口设置
+  attn_type: local      # 可选：local / full
+  rel_pos: alibi        # 可选：alibi / none
+  window_size: 128      # 仅在 local 注意力下生效
+
+  # 记录/保存
+  log_interval: 50
+  eval_interval: 200
+  ckpt_interval: 1000
+  save_dir: results/lm
+
+model:
+  # Transformer 结构
+  d_model: 512
+  n_layers: 8
+  n_heads: 8
+  d_ff: 2048
+
+  # 其余细节
+  ff_act: gelu
+  tie_weights: true
+  layer_norm_eps: 1.0e-5
+  resid_pdrop: 0.0
+  attn_pdrop: 0.0

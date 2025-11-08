@@ -1,0 +1,12 @@
+torch>=2.2
+torchvision>=0.17
+torchaudio>=2.2
+datasets>=2.19
+transformers>=4.44
+sentencepiece>=0.2
+tokenizers>=0.15
+matplotlib>=3.8
+tqdm>=4.66
+pyyaml>=6.0
+pandas>=2.2
+sacrebleu>=2.4

@@ -1,0 +1,44 @@
+# configs/fast_lm.yaml  —— CPU 也能较快跑完的配置
+model:
+  d_model: 256
+  n_layers: 4
+  n_heads: 4
+  d_ff: 1024
+  attn_type: local      # 基线仍用局部注意力
+  rel_pos: alibi
+  max_len: 128
+
+train:
+  batch_size: 64
+  max_steps: 180        # 比原来 300 更短
+  eval_every: 60
+  log_every: 20
+
+data:
+  num_workers: 4        # Windows 下 2~4 都可以
+
+save_dir: results/lm    # 保持与你项目一致
+model:
+  d_model: 256
+  n_layers: 4
+  n_heads: 4
+  d_ff: 1024
+  attn_type: local
+  rel_pos: alibi
+  max_len: 128
+
+train:
+  batch_size: 64
+  max_steps: 180
+  eval_every: 60
+  log_every: 20
+  lr: 3.0e-4
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+
+data:
+  num_workers: 4
+
+save_dir: results/lm
+
